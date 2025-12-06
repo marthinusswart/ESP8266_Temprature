@@ -3,41 +3,23 @@
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
-#include <ESP8266WiFi.h> // Add WiFi library
-#include <EEPROM.h>      // Add EEPROM library
+#include "esp8266EEPROM.h"
+#include "logger.h"
+#include "esp8266WifiModule.h"
+#include "i2cScanner.h"
 
 constexpr int SCL_PIN = 5;       // D1 = GPIO5
 constexpr int SDA_PIN = 4;       // D1 = GPIO4
 Adafruit_BMP280 bmp;             // I2C
 constexpr int bmpAddress = 0x76; // BMP280 I2C address
-
-// EEPROM configuration
-constexpr int EEPROM_SIZE = 512;           // Size of EEPROM to initialize
-constexpr int EEPROM_MAGIC_ADDR = 0;       // Address for magic number
-constexpr int EEPROM_MAGIC_VALUE = 0xAB42; // Magic number to validate EEPROM data
-constexpr int EEPROM_SSID_ADDR = 2;        // Start address for SSID (2 bytes after magic)
-constexpr int EEPROM_PASS_ADDR = 66;       // Start address for password (64 bytes after SSID start)
-constexpr int MAX_SSID_LENGTH = 32;        // Maximum SSID length (plus null terminator)
-constexpr int MAX_PASS_LENGTH = 64;        // Maximum password length (plus null terminator)
+ESP8266EEPROM eeprom;            // EEPROM handler
+ESP8266WiFiModule wifiModule;    // WiFi module handler
+I2CScanner i2cScanner;           // I2C scanner handler
 
 // WiFi credentials (volatile memory)
 String ssid = "";
 String password = "";
 bool wifiConfigured = false;
-
-#ifdef DEBUG
-#define DBG(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)       /* Debug with no line feed */
-#define DBGL(fmt, ...) Serial.printf(fmt "\n", ##__VA_ARGS__) /* Debug Line */
-#else
-#define DBG(fmt, ...)
-#define DBGL(fmt, ...)
-#endif
-
-void scanAddresses();
-void configureWiFi();
-void connectToWiFi();
-void saveCredentialsToEEPROM(const String &ssid, const String &password);
-bool loadCredentialsFromEEPROM();
 
 void setup()
 {
@@ -49,11 +31,10 @@ void setup()
 
     Wire.begin(SDA_PIN, SCL_PIN);
 
-    // Initialize EEPROM
-    EEPROM.begin(EEPROM_SIZE);
+    i2cScanner.scanAddresses();
 
     // Try to load WiFi credentials from EEPROM
-    if (loadCredentialsFromEEPROM())
+    if (eeprom.loadCredentialsFromEEPROM(ssid, password))
     {
         wifiConfigured = true;
         DBGL("WiFi credentials loaded from EEPROM");
@@ -78,7 +59,7 @@ void setup()
             char response = Serial.read();
             if (response == 'y' || response == 'Y')
             {
-                configureWiFi();
+                wifiModule.configureWiFi();
                 break;
             }
             else if (response == 'n' || response == 'N')
@@ -93,14 +74,12 @@ void setup()
     // If WiFi is configured, connect
     if (wifiConfigured)
     {
-        connectToWiFi();
+        wifiModule.connectToWiFi(ssid, password);
     }
 }
 
 void loop()
 {
-    // scanAddresses();
-
     Serial.print("Temperature = ");
     Serial.print(bmp.readTemperature());
     Serial.println(" *C");
@@ -114,191 +93,22 @@ void loop()
     Serial.println(" m");
 
     // Put WiFi into modem sleep mode to save power before delay
-    if (WiFi.status() == WL_CONNECTED)
+    if (wifiModule.isWiFiConnected())
     {
-        DBGL("Putting WiFi to sleep mode");
-        WiFi.forceSleepBegin();
+        wifiModule.sleepWiFi();
     }
 
     delay(60 * 1000); // wait 60 seconds
+    // delay(10 * 1000); // wait 10 seconds
 
     // Wake up WiFi after delay if it was previously connected
     if (wifiConfigured)
     {
-        DBGL("Waking up WiFi");
-        WiFi.forceSleepWake();
-        yield(); // Allow ESP8266 to handle background tasks
+        wifiModule.wakeWiFi();
         // Only attempt to reconnect if it was previously connected
-        if (WiFi.status() != WL_CONNECTED)
+        if (!wifiModule.isWiFiConnected())
         {
-            connectToWiFi();
+            wifiModule.reconnectToWiFi();
         }
     }
-}
-
-void scanAddresses()
-{
-    DBGL("Scanning...");
-
-    for (uint8_t address = 1; address < 127; address++)
-    {
-        Wire.beginTransmission(address);
-        uint8_t error = Wire.endTransmission();
-
-        if (error == 0)
-        {
-            DBGL("I2C device found at address 0x%02X", address);
-        }
-        else if (error == 4)
-        {
-            DBGL("Unknown error at address 0x%02X", address);
-        }
-        else
-        {
-            // DBGL("No I2C device found at address 0x%02X", address);
-        }
-    }
-
-    delay(5000); // wait 5 seconds for next scan
-}
-
-// Function to configure WiFi via serial input
-void configureWiFi()
-{
-    DBGL("=== WiFi Configuration ===");
-
-    // Get SSID
-    DBGL("Enter WiFi SSID:");
-    while (!Serial.available())
-    {
-        yield(); // Allow ESP8266 to handle background tasks
-    }
-
-    ssid = Serial.readStringUntil('\n');
-    ssid.trim(); // Remove any whitespace/newlines
-    DBGL("SSID received: %s", ssid.c_str());
-
-    // Get password
-    DBGL("Enter WiFi password:");
-    while (!Serial.available())
-    {
-        yield();
-    }
-
-    password = Serial.readStringUntil('\n');
-    password.trim();
-    DBGL("Password received (not shown for security)");
-
-    wifiConfigured = true;
-
-    // Save credentials to EEPROM
-    saveCredentialsToEEPROM(ssid, password);
-
-    DBGL("WiFi configuration complete");
-}
-
-// Function to connect to WiFi
-void connectToWiFi()
-{
-    DBGL("Connecting to WiFi SSID: %s", ssid.c_str());
-
-    WiFi.begin(ssid.c_str(), password.c_str());
-
-    // Wait for connection with timeout
-    int timeout = 20; // 10 seconds (20 * 500ms)
-    while (WiFi.status() != WL_CONNECTED && timeout > 0)
-    {
-        delay(500);
-        Serial.print(".");
-        timeout--;
-    }
-
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        Serial.println();
-        DBGL("WiFi connected");
-        DBGL("IP address: %s", WiFi.localIP().toString().c_str());
-    }
-    else
-    {
-        DBGL("Failed to connect to WiFi");
-    }
-}
-
-// Function to save WiFi credentials to EEPROM
-void saveCredentialsToEEPROM(const String &ssid, const String &password)
-{
-    DBGL("Saving WiFi credentials to EEPROM");
-
-    // Write magic number to indicate valid data
-    EEPROM.put(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VALUE);
-
-    // Write SSID (with bounds checking)
-    uint8_t ssidLength = min(ssid.length(), (unsigned int)MAX_SSID_LENGTH - 1);
-    for (uint8_t i = 0; i < ssidLength; i++)
-    {
-        EEPROM.write(EEPROM_SSID_ADDR + i, ssid[i]);
-    }
-    EEPROM.write(EEPROM_SSID_ADDR + ssidLength, 0); // Null terminator
-
-    // Write password (with bounds checking)
-    uint8_t passLength = min(password.length(), (unsigned int)MAX_PASS_LENGTH - 1);
-    for (uint8_t i = 0; i < passLength; i++)
-    {
-        EEPROM.write(EEPROM_PASS_ADDR + i, password[i]);
-    }
-    EEPROM.write(EEPROM_PASS_ADDR + passLength, 0); // Null terminator
-
-    // Commit changes to flash
-    bool success = EEPROM.commit();
-    if (success)
-    {
-        DBGL("Credentials saved successfully");
-    }
-    else
-    {
-        DBGL("Failed to save credentials");
-    }
-}
-
-// Function to load WiFi credentials from EEPROM
-bool loadCredentialsFromEEPROM()
-{
-    // Check magic number to validate data
-    uint16_t magic;
-    EEPROM.get(EEPROM_MAGIC_ADDR, magic);
-
-    if (magic != EEPROM_MAGIC_VALUE)
-    {
-        DBGL("No valid WiFi credentials found in EEPROM");
-        return false;
-    }
-
-    // Read SSID
-    char ssidBuffer[MAX_SSID_LENGTH];
-    for (int i = 0; i < MAX_SSID_LENGTH - 1; i++)
-    {
-        ssidBuffer[i] = EEPROM.read(EEPROM_SSID_ADDR + i);
-        if (ssidBuffer[i] == 0)
-            break; // Stop at null terminator
-    }
-    ssidBuffer[MAX_SSID_LENGTH - 1] = 0; // Ensure null termination
-
-    // Read password
-    char passBuffer[MAX_PASS_LENGTH];
-    for (int i = 0; i < MAX_PASS_LENGTH - 1; i++)
-    {
-        passBuffer[i] = EEPROM.read(EEPROM_PASS_ADDR + i);
-        if (passBuffer[i] == 0)
-            break; // Stop at null terminator
-    }
-    passBuffer[MAX_PASS_LENGTH - 1] = 0; // Ensure null termination
-
-    // Update global variables
-    ssid = String(ssidBuffer);
-    password = String(passBuffer);
-
-    DBGL("Loaded SSID from EEPROM: %s", ssid.c_str());
-
-    return true;
 }
