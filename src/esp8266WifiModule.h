@@ -2,7 +2,8 @@
 #define ESP8266WIFIMODULE_H
 
 #include <Arduino.h>
-#include <ESP8266WiFi.h> // Add WiFi library
+#include <ESP8266WiFi.h>       // Add WiFi library
+#include <ESP8266HTTPClient.h> // Add HTTP client library
 
 class ESP8266WiFiModule
 {

@@ -7,6 +7,7 @@
 #include "logger.h"
 #include "esp8266WifiModule.h"
 #include "i2cScanner.h"
+#include "esp8266RESTModule.h"
 
 constexpr int SCL_PIN = 5;       // D1 = GPIO5
 constexpr int SDA_PIN = 4;       // D1 = GPIO4
@@ -15,11 +16,13 @@ constexpr int bmpAddress = 0x76; // BMP280 I2C address
 ESP8266EEPROM eeprom;            // EEPROM handler
 ESP8266WiFiModule wifiModule;    // WiFi module handler
 I2CScanner i2cScanner;           // I2C scanner handler
+ESP8266RESTModule restModule;    // REST module handler
 
 // WiFi credentials (volatile memory)
 String ssid = "";
 String password = "";
 bool wifiConfigured = false;
+const String componmentId = "esp8266_bmp280_01";
 
 void setup()
 {
@@ -75,6 +78,21 @@ void setup()
     if (wifiConfigured)
     {
         wifiModule.connectToWiFi(ssid, password);
+
+        // Check if API endpoint is alive
+        if (wifiModule.isWiFiConnected())
+        {
+            DBGL("Checking if API endpoint is alive...");
+            bool apiAlive = restModule.isAlive();
+            if (apiAlive)
+            {
+                DBGL("API endpoint is alive!");
+            }
+            else
+            {
+                DBGL("API endpoint is not responding!");
+            }
+        }
     }
 }
 
@@ -92,14 +110,24 @@ void loop()
     Serial.print(bmp.readAltitude(1013.25)); // this should be adjusted to your local forcase
     Serial.println(" m");
 
+    bool apiPost = restModule.updateTemperatureReading(componmentId, String(bmp.readTemperature()));
+    if (apiPost)
+    {
+        DBGL("API endpoint posted!");
+    }
+    else
+    {
+        DBGL("API endpoint is not responding!");
+    }
+
     // Put WiFi into modem sleep mode to save power before delay
     if (wifiModule.isWiFiConnected())
     {
         wifiModule.sleepWiFi();
     }
 
-    delay(60 * 1000); // wait 60 seconds
-    // delay(10 * 1000); // wait 10 seconds
+    // delay(60 * 1000); // wait 60 seconds
+    delay(10 * 1000); // wait 10 seconds
 
     // Wake up WiFi after delay if it was previously connected
     if (wifiConfigured)

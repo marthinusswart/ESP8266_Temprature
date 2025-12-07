@@ -1,7 +1,8 @@
 #include "esp8266WifiModule.h"
 #include "logger.h"
 #include "esp8266EEPROM.h"
-#include <ESP8266WiFi.h> // Add WiFi library
+#include <ESP8266WiFi.h>       // Add WiFi library
+#include <ESP8266HTTPClient.h> // Add HTTP client library
 #include <Wire.h>
 #include <SPI.h>
 
@@ -104,3 +105,4 @@ bool ESP8266WiFiModule::isWiFiConnected()
 {
     return WiFi.status() == WL_CONNECTED;
 }
+
