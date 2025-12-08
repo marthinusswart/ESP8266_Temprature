@@ -121,22 +121,22 @@ void loop()
     }
 
     // Put WiFi into modem sleep mode to save power before delay
-    if (wifiModule.isWiFiConnected())
+    if (!wifiModule.isWiFiConnected())
     {
-        wifiModule.sleepWiFi();
+        wifiModule.reconnectToWiFi();
     }
 
     // delay(60 * 1000); // wait 60 seconds
-    delay(10 * 1000); // wait 10 seconds
+    delay(60 * 1000); // wait 10 seconds
 
     // Wake up WiFi after delay if it was previously connected
-    if (wifiConfigured)
-    {
-        wifiModule.wakeWiFi();
-        // Only attempt to reconnect if it was previously connected
-        if (!wifiModule.isWiFiConnected())
-        {
-            wifiModule.reconnectToWiFi();
-        }
-    }
+    // if (wifiConfigured)
+    // {
+    //     wifiModule.wakeWiFi();
+    //     // Only attempt to reconnect if it was previously connected
+    //     if (!wifiModule.isWiFiConnected())
+    //     {
+    //         wifiModule.reconnectToWiFi();
+    //     }
+    // }
 }
